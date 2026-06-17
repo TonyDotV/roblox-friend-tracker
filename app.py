@@ -95,44 +95,78 @@ def get_avatar_url(uid):
         return data['data'][0].get('imageUrl', '')
     return ''
 
+def resolve_usernames_batch(user_ids):
+    """
+    POST to users API to resolve usernames for a list of user IDs.
+    Returns dict: {user_id: {username, displayName}}
+    """
+    if not user_ids:
+        return {}
+    try:
+        r = requests.post(
+            'https://users.roblox.com/v1/users',
+            json={'userIds': user_ids, 'excludeBannedUsers': False},
+            headers=HEADERS,
+            timeout=10
+        )
+        r.raise_for_status()
+        result = {}
+        for u in r.json().get('data', []):
+            result[u['id']] = {
+                'username': u.get('name', ''),
+                'display_name': u.get('displayName', '')
+            }
+        return result
+    except Exception as e:
+        print(f'[resolve_usernames_batch] {e}')
+        return {}
+
 def fetch_friends():
     """
-    Fetches ALL friends using pagination.
-    The Roblox friends API returns up to 100 per page with a nextPageCursor.
-    We loop through all pages to collect every friend.
+    Uses /friends/find to get ALL friend IDs (correctly paginated),
+    then resolves their usernames via the users POST API.
+    The old /friends endpoint silently caps results for some accounts.
     """
+    all_ids = []
     seen = set()
-    friends = []
     cursor = ''
 
     while True:
-        url = f'https://friends.roblox.com/v1/users/{USER_ID}/friends?limit=100'
+        url = f'https://friends.roblox.com/v1/users/{USER_ID}/friends/find?userSort=0&limit=50'
         if cursor:
             url += f'&cursor={cursor}'
-
         try:
             r = requests.get(url, headers=HEADERS, timeout=10)
             r.raise_for_status()
             data = r.json()
         except Exception as e:
             print(f'[fetch_friends] {e}')
-            return None  # API error
+            return None
 
-        for f in data.get('data', []):
-            uid = f['id']
+        for item in data.get('PageItems', []):
+            uid = item['id']
             if uid not in seen:
                 seen.add(uid)
-                friends.append({
-                    'user_id': uid,
-                    'username': f.get('name', ''),
-                    'display_name': f.get('displayName', '')
-                })
+                all_ids.append(uid)
 
-        cursor = data.get('nextPageCursor') or ''
+        cursor = data.get('NextCursor') or ''
         if not cursor:
-            break  # no more pages
+            break
 
-    print(f'[fetch_friends] Found {len(friends)} friends total')
+    print(f'[fetch_friends] Found {len(all_ids)} friend IDs')
+
+    # Resolve usernames in one batch POST
+    user_info = resolve_usernames_batch(all_ids)
+
+    friends = []
+    for uid in all_ids:
+        info = user_info.get(uid, {})
+        friends.append({
+            'user_id': uid,
+            'username': info.get('username', str(uid)),
+            'display_name': info.get('display_name', str(uid))
+        })
+
     return friends
 
 def get_friend_avatars_batch(user_ids):
@@ -162,14 +196,11 @@ def sync_friends():
 
     live_ids = {f['user_id'] for f in live_friends}
 
-    # Get known friends from DB
     cur.execute('SELECT user_id FROM friends')
     known_ids = {row[0] for row in cur.fetchall()}
 
-    # Fetch avatars for all live friends
     avatars = get_friend_avatars_batch(list(live_ids))
 
-    # Detect unfriends (were in DB, no longer in live list)
     gone_ids = known_ids - live_ids
     for uid in gone_ids:
         cur.execute('SELECT username, display_name, avatar_url FROM friends WHERE user_id=?', (uid,))
@@ -182,7 +213,6 @@ def sync_friends():
             cur.execute('DELETE FROM friends WHERE user_id=?', (uid,))
             print(f'[unfriend] {row[0]} removed at {now}')
 
-    # Upsert friends: INSERT OR IGNORE to create row, then UPDATE to refresh data.
     for f in live_friends:
         uid = f['user_id']
         avatar = avatars.get(uid, '')
@@ -195,7 +225,6 @@ def sync_friends():
             (f['username'], f['display_name'], avatar, now, uid)
         )
 
-    # Snapshot
     cur.execute('INSERT INTO snapshots (taken_at, friend_count) VALUES (?,?)', (now, len(live_friends)))
     con.commit()
     con.close()
@@ -293,7 +322,7 @@ def serve_frontend(path):
 # -- Main -------------------------------------------------------------
 if __name__ == '__main__':
     init_db()
-    sync_friends()  # initial sync on startup
+    sync_friends()
     t = threading.Thread(target=polling_loop, daemon=True)
     t.start()
     print('[server] Running at http://localhost:5000')
