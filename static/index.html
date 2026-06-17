@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Roblox Tracker</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #111111;
+      --surface:   #1a1a1a;
+      --surface2:  #222222;
+      --border:    #2a2a2a;
+      --accent:    #3a3a3a;
+      --text:      #e0e0e0;
+      --muted:     #888888;
+      --online:    #4ade80;
+      --ingame:    #60a5fa;
+      --offline:   #555555;
+      --danger:    #f87171;
+      --obsidian:  #0d0d0f;
+    }
+
+    html, body {
+      height: 100%;
+      background: var(--obsidian);
+      color: var(--text);
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    /* ── Fade-in animation ── */
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(16px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .fade { animation: fadeUp 0.45s ease both; }
+    .fade-d1 { animation-delay: 0.05s; }
+    .fade-d2 { animation-delay: 0.12s; }
+    .fade-d3 { animation-delay: 0.19s; }
+    .fade-d4 { animation-delay: 0.26s; }
+
+    /* ── Layout ── */
+    #app {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 32px 20px 64px;
+    }
+
+    /* ── Header ── */
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 32px;
+    }
+    .logo {
+      font-size: 16px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+    .logo span { color: var(--text); }
+
+    #sync-btn {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 6px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      transition: background 0.2s, border-color 0.2s;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    #sync-btn:hover { background: var(--accent); border-color: #444; }
+    #sync-btn.spinning svg { animation: spin 0.8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Profile card ── */
+    #profile-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px;
+      display: flex;
+      gap: 20px;
+      align-items: flex-start;
+      margin-bottom: 24px;
+    }
+    #profile-card .avatar {
+      width: 80px;
+      height: 80px;
+      border-radius: 50%;
+      background: var(--surface2);
+      object-fit: cover;
+      flex-shrink: 0;
+      border: 2px solid var(--border);
+    }
+    .profile-info { flex: 1; min-width: 0; }
+    .profile-name {
+      font-size: 20px;
+      font-weight: 700;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .profile-handle {
+      color: var(--muted);
+      font-size: 13px;
+      margin-bottom: 8px;
+    }
+    .profile-desc {
+      color: var(--muted);
+      font-size: 13px;
+      margin-bottom: 12px;
+      max-height: 48px;
+      overflow: hidden;
+    }
+    .profile-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    .meta-pill {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 3px 10px;
+      font-size: 12px;
+      color: var(--muted);
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .meta-pill b { color: var(--text); }
+
+    /* Status dot */
+    .status-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      display: inline-block;
+      flex-shrink: 0;
+    }
+    .status-dot.online  { background: var(--online);  box-shadow: 0 0 6px var(--online); }
+    .status-dot.ingame  { background: var(--ingame);  box-shadow: 0 0 6px var(--ingame); }
+    .status-dot.offline { background: var(--offline); }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .status-badge.online  { color: var(--online); }
+    .status-badge.ingame  { color: var(--ingame); }
+    .status-badge.offline { color: var(--offline);}
+
+    /* ── Stats row ── */
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+    .stat-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px 18px;
+      text-align: center;
+    }
+    .stat-card .num {
+      font-size: 28px;
+      font-weight: 700;
+      line-height: 1;
+      margin-bottom: 4px;
+    }
+    .stat-card .lbl {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+    }
+    .stat-card.danger .num { color: var(--danger); }
+
+    /* ── Section ── */
+    .section-title {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--muted);
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .section-title::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: var(--border);
+    }
+
+    /* ── Friends grid ── */
+    #friends-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+      gap: 12px;
+      margin-bottom: 32px;
+    }
+    .friend-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px 10px;
+      text-align: center;
+      transition: border-color 0.2s, transform 0.2s;
+      cursor: default;
+    }
+    .friend-card:hover {
+      border-color: #444;
+      transform: translateY(-2px);
+    }
+    .friend-card img {
+      width: 56px;
+      height: 56px;
+      border-radius: 50%;
+      background: var(--surface2);
+      margin-bottom: 8px;
+      border: 2px solid var(--border);
+    }
+    .friend-card .f-name {
+      font-size: 13px;
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .friend-card .f-handle {
+      font-size: 11px;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .friend-card a {
+      display: inline-block;
+      margin-top: 6px;
+      font-size: 11px;
+      color: var(--muted);
+      text-decoration: none;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 2px 7px;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    .friend-card a:hover { color: var(--text); border-color: #555; }
+
+    /* ── Unfriend log ── */
+    #unfriend-list { margin-bottom: 32px; }
+    .unfriend-item {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--danger);
+      border-radius: 8px;
+      padding: 12px 16px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 8px;
+      transition: border-color 0.2s;
+    }
+    .unfriend-item:hover { border-color: #f87171; }
+    .unfriend-item img {
+      width: 40px; height: 40px;
+      border-radius: 50%;
+      background: var(--surface2);
+      flex-shrink: 0;
+    }
+    .unfriend-item .u-info { flex: 1; min-width: 0; }
+    .unfriend-item .u-name { font-weight: 600; font-size: 14px; }
+    .unfriend-item .u-time { font-size: 12px; color: var(--muted); }
+    .unfriend-item .u-badge {
+      font-size: 11px;
+      color: var(--danger);
+      background: rgba(248,113,113,0.08);
+      border: 1px solid rgba(248,113,113,0.2);
+      border-radius: 4px;
+      padding: 2px 8px;
+      white-space: nowrap;
+    }
+
+    /* ── Empty / loading states ── */
+    .empty {
+      text-align: center;
+      color: var(--muted);
+      padding: 32px;
+      font-size: 13px;
+    }
+    .skeleton {
+      background: linear-gradient(90deg, var(--surface) 25%, var(--surface2) 50%, var(--surface) 75%);
+      background-size: 200% 100%;
+      animation: shimmer 1.4s infinite;
+      border-radius: 8px;
+      height: 24px;
+    }
+    @keyframes shimmer { to { background-position: -200% 0; } }
+
+    /* ── Last synced ── */
+    #last-sync {
+      text-align: right;
+      font-size: 11px;
+      color: var(--muted);
+      margin-bottom: 20px;
+    }
+
+    /* ── Toast notification ── */
+    #toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 18px;
+      font-size: 13px;
+      color: var(--text);
+      opacity: 0;
+      transform: translateY(10px);
+      transition: opacity 0.3s, transform 0.3s;
+      pointer-events: none;
+      z-index: 100;
+    }
+    #toast.show { opacity: 1; transform: translateY(0); }
+    #toast.ok   { border-left: 3px solid var(--online); }
+    #toast.err  { border-left: 3px solid var(--danger); }
+
+    /* ── Responsive ── */
+    @media (max-width: 600px) {
+      .stats-row { grid-template-columns: 1fr 1fr; }
+      #profile-card { flex-direction: column; align-items: center; text-align: center; }
+      .profile-meta { justify-content: center; }
+    }
+  </style>
+</head>
+<body>
+<div id="app">
+
+  <header class="fade">
+    <div class="logo">Rblx<span>Track</span></div>
+    <button id="sync-btn" onclick="manualSync()">
+      <svg id="sync-icon" width="13" height="13" viewBox="0 0 24 24" fill="none"
+           stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M23 4v6h-6"/><path d="M1 20v-6h6"/>
+        <path d="M3.51 9a9 9 0 0114.36-3.36L23 10M1 14l5.13 4.36A9 9 0 0020.49 15"/>
+      </svg>
+      Sync now
+    </button>
+  </header>
+
+  <!-- Profile -->
+  <div id="profile-card" class="fade fade-d1">
+    <div class="skeleton" style="width:80px;height:80px;border-radius:50%;flex-shrink:0;"></div>
+    <div class="profile-info">
+      <div class="skeleton" style="width:160px;height:22px;margin-bottom:8px;"></div>
+      <div class="skeleton" style="width:100px;height:14px;margin-bottom:12px;"></div>
+      <div class="skeleton" style="width:100%;height:14px;"></div>
+    </div>
+  </div>
+
+  <!-- Stats row -->
+  <div class="stats-row fade fade-d2">
+    <div class="stat-card">
+      <div class="num" id="stat-friends">—</div>
+      <div class="lbl">Friends</div>
+    </div>
+    <div class="stat-card danger">
+      <div class="num" id="stat-unfriends">—</div>
+      <div class="lbl">Unfriended</div>
+    </div>
+    <div class="stat-card">
+      <div class="num" id="stat-groups">—</div>
+      <div class="lbl">Groups</div>
+    </div>
+  </div>
+
+  <div id="last-sync" class="fade fade-d2">Never synced</div>
+
+  <!-- Friends -->
+  <div class="fade fade-d3">
+    <div class="section-title">Friends</div>
+    <div id="friends-grid"><div class="empty">Loading...</div></div>
+  </div>
+
+  <!-- Unfriend Log -->
+  <div class="fade fade-d4">
+    <div class="section-title">Unfriend Log</div>
+    <div id="unfriend-list"><div class="empty">No unfriends detected yet.</div></div>
+  </div>
+
+</div>
+
+<div id="toast"></div>
+
+<script>
+const API = '';
+
+function showToast(msg, type='ok') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'show ' + type;
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => t.className = '', 3000);
+}
+
+function statusClass(s) {
+  if (!s) return 'offline';
+  const l = s.toLowerCase();
+  if (l.includes('game')) return 'ingame';
+  if (l === 'online') return 'online';
+  return 'offline';
+}
+
+function formatDate(iso) {
+  if (!iso) return 'Unknown';
+  return new Date(iso).toLocaleDateString('en-GB', {
+    year: 'numeric', month: 'short', day: 'numeric'
+  });
+}
+
+function timeAgo(iso) {
+  if (!iso) return '';
+  const diff = Date.now() - new Date(iso).getTime();
+  const m = Math.floor(diff / 60000);
+  if (m < 1)  return 'just now';
+  if (m < 60) return m + 'm ago';
+  const h = Math.floor(m / 60);
+  if (h < 24) return h + 'h ago';
+  return Math.floor(h / 24) + 'd ago';
+}
+
+async function loadProfile() {
+  try {
+    const res = await fetch(API + '/api/profile');
+    const d = await res.json();
+    const sc = statusClass(d.presence?.status);
+    const card = document.getElementById('profile-card');
+    card.innerHTML = `
+      <img class="avatar" src="${d.avatarUrl || ''}" alt="avatar"
+           onerror="this.src='https://www.roblox.com/headshot-thumbnail/image?userId=${d.id}&width=150&height=150&format=png'">
+      <div class="profile-info">
+        <div class="profile-name">${d.displayName || d.username}</div>
+        <div class="profile-handle">@${d.username} &nbsp;&middot;&nbsp; ID: ${d.id}</div>
+        <div class="profile-desc">${d.description || '<span style="color:var(--muted)">No description.</span>'}</div>
+        <div class="profile-meta">
+          <div class="meta-pill">
+            <span class="status-dot ${sc}"></span>
+            <span class="status-badge ${sc}">${d.presence?.status || 'Offline'}</span>
+            ${d.presence?.lastLocation ? '<span style="color:var(--muted);font-size:11px">&mdash; ' + d.presence.lastLocation + '</span>' : ''}
+          </div>
+          <div class="meta-pill">Joined <b>${formatDate(d.created)}</b></div>
+          <div class="meta-pill">Groups <b>${d.groupCount ?? 0}</b></div>
+          ${d.hasVerifiedBadge ? '<div class="meta-pill">&#10003; Verified</div>' : ''}
+          ${d.presence?.lastOnline ? '<div class="meta-pill">Last online <b>' + timeAgo(d.presence.lastOnline) + '</b></div>' : ''}
+        </div>
+      </div>`;
+    document.getElementById('stat-groups').textContent = d.groupCount ?? 0;
+  } catch(e) {
+    document.getElementById('profile-card').innerHTML =
+      '<div class="empty">Could not load profile. Is the server running?</div>';
+  }
+}
+
+async function loadStats() {
+  try {
+    const res = await fetch(API + '/api/stats');
+    const d = await res.json();
+    document.getElementById('stat-friends').textContent = d.friendCount ?? 0;
+    document.getElementById('stat-unfriends').textContent = d.unfriendCount ?? 0;
+  } catch(e) {}
+}
+
+async function loadFriends() {
+  const grid = document.getElementById('friends-grid');
+  try {
+    const res = await fetch(API + '/api/friends');
+    const friends = await res.json();
+    if (!friends.length) {
+      grid.innerHTML = '<div class="empty">No friends in database yet. Click Sync now.</div>';
+      return;
+    }
+    grid.innerHTML = friends.map((f, i) => `
+      <div class="friend-card fade" style="animation-delay:${0.03 * i}s">
+        <img src="${f.avatarUrl || ''}" alt="${f.username}"
+             onerror="this.src='https://www.roblox.com/headshot-thumbnail/image?userId=${f.userId}&width=150&height=150&format=png'">
+        <div class="f-name">${f.displayName || f.username}</div>
+        <div class="f-handle">@${f.username}</div>
+        <a href="https://www.roblox.com/users/${f.userId}/profile" target="_blank" rel="noopener">Profile &rarr;</a>
+      </div>`).join('');
+  } catch(e) {
+    grid.innerHTML = '<div class="empty">Failed to load friends.</div>';
+  }
+}
+
+async function loadUnfriends() {
+  const list = document.getElementById('unfriend-list');
+  try {
+    const res = await fetch(API + '/api/unfriends');
+    const log = await res.json();
+    if (!log.length) {
+      list.innerHTML = '<div class="empty">No unfriends detected yet. Good.</div>';
+      return;
+    }
+    list.innerHTML = log.map(u => `
+      <div class="unfriend-item">
+        <img src="${u.avatarUrl || ''}" alt="${u.username}"
+             onerror="this.src='https://www.roblox.com/headshot-thumbnail/image?userId=${u.userId}&width=150&height=150&format=png'">
+        <div class="u-info">
+          <div class="u-name">${u.displayName || u.username} <span style="color:var(--muted);font-weight:400;font-size:12px">@${u.username}</span></div>
+          <div class="u-time">Detected ${formatDate(u.detectedAt)} &middot; ${timeAgo(u.detectedAt)}</div>
+        </div>
+        <div class="u-badge">Unfriended</div>
+      </div>`).join('');
+  } catch(e) {
+    list.innerHTML = '<div class="empty">Failed to load unfriend log.</div>';
+  }
+}
+
+function updateLastSync() {
+  const el = document.getElementById('last-sync');
+  const now = new Date().toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit'});
+  el.textContent = 'Last synced: ' + now;
+}
+
+async function manualSync() {
+  const btn = document.getElementById('sync-btn');
+  btn.classList.add('spinning');
+  btn.disabled = true;
+  try {
+    const res = await fetch(API + '/api/sync', {method: 'POST'});
+    const d = await res.json();
+    if (d.ok) {
+      showToast('Sync complete', 'ok');
+      updateLastSync();
+      await Promise.all([loadProfile(), loadStats(), loadFriends(), loadUnfriends()]);
+    } else {
+      showToast('Sync failed: ' + d.message, 'err');
+    }
+  } catch(e) {
+    showToast('Server unreachable', 'err');
+  } finally {
+    btn.classList.remove('spinning');
+    btn.disabled = false;
+  }
+}
+
+async function init() {
+  await Promise.all([loadProfile(), loadStats(), loadFriends(), loadUnfriends()]);
+  updateLastSync();
+  // Auto-refresh every 5 minutes
+  setInterval(async () => {
+    await Promise.all([loadProfile(), loadStats(), loadFriends(), loadUnfriends()]);
+    updateLastSync();
+  }, 300000);
+}
+
+init();
+</script>
+</body>
+</html>
