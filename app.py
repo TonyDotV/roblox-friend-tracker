@@ -195,14 +195,17 @@ def sync_friends():
                 for friend in api_friends:
                     if friend['id'] in new_friend_ids:
                         avatar_url = fetch_avatar_headshot(friend['id'])
+                                                        user_info = fetch_user_info(friend['id'])
+                                username = user_info.get('name', '') if user_info else ''
+                                display_name = user_info.get('displayName', '') if user_info else ''
                         cur.execute('''
                             INSERT OR REPLACE INTO friends 
                             (user_id, username, display_name, avatar_url, first_seen, last_seen)
                             VALUES (?, ?, ?, ?, ?, ?)
                         ''', (
                             friend['id'],
-                            friend.get('name', ''),
-                            friend.get('displayName', ''),
+                                                        username,
+                            display_name,
                             avatar_url,
                             current_time,
                             current_time
@@ -232,10 +235,8 @@ def sync_friends():
                 if friend['id'] not in new_friend_ids:
                     cur.execute('''
                         UPDATE friends 
-                        SET last_seen = ?, username = ?, display_name = ?
-                        WHERE user_id = ?
-                    ''', (current_time, friend.get('name', ''), friend.get('displayName', ''), friend['id']))
-            
+                        SET last_seen = ?                        WHERE user_id = ?
+                    ''', (current_time, friend['id']))            
             # Create snapshot
             cur.execute('''
                 INSERT INTO snapshots (taken_at, friend_count)
