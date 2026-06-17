@@ -96,21 +96,43 @@ def get_avatar_url(uid):
     return ''
 
 def fetch_friends():
-    data = roblox_get(f'https://friends.roblox.com/v1/users/{USER_ID}/friends')
-    if data is None:
-        return None  # API error
-    # Deduplicate by user_id (Roblox API can return duplicates)
+    """
+    Fetches ALL friends using pagination.
+    The Roblox friends API returns up to 100 per page with a nextPageCursor.
+    We loop through all pages to collect every friend.
+    """
     seen = set()
     friends = []
-    for f in data.get('data', []):
-        uid = f['id']
-        if uid not in seen:
-            seen.add(uid)
-            friends.append({
-                'user_id': uid,
-                'username': f.get('name', ''),
-                'display_name': f.get('displayName', '')
-            })
+    cursor = ''
+
+    while True:
+        url = f'https://friends.roblox.com/v1/users/{USER_ID}/friends?limit=100'
+        if cursor:
+            url += f'&cursor={cursor}'
+
+        try:
+            r = requests.get(url, headers=HEADERS, timeout=10)
+            r.raise_for_status()
+            data = r.json()
+        except Exception as e:
+            print(f'[fetch_friends] {e}')
+            return None  # API error
+
+        for f in data.get('data', []):
+            uid = f['id']
+            if uid not in seen:
+                seen.add(uid)
+                friends.append({
+                    'user_id': uid,
+                    'username': f.get('name', ''),
+                    'display_name': f.get('displayName', '')
+                })
+
+        cursor = data.get('nextPageCursor') or ''
+        if not cursor:
+            break  # no more pages
+
+    print(f'[fetch_friends] Found {len(friends)} friends total')
     return friends
 
 def get_friend_avatars_batch(user_ids):
@@ -161,16 +183,13 @@ def sync_friends():
             print(f'[unfriend] {row[0]} removed at {now}')
 
     # Upsert friends: INSERT OR IGNORE to create row, then UPDATE to refresh data.
-    # This is safe against duplicates in the API response and re-runs.
     for f in live_friends:
         uid = f['user_id']
         avatar = avatars.get(uid, '')
-        # Insert new friend (ignored if already exists, preserving first_seen)
         cur.execute(
             'INSERT OR IGNORE INTO friends (user_id, username, display_name, avatar_url, first_seen, last_seen) VALUES (?,?,?,?,?,?)',
             (uid, f['username'], f['display_name'], avatar, now, now)
         )
-        # Always update mutable fields
         cur.execute(
             'UPDATE friends SET username=?, display_name=?, avatar_url=?, last_seen=? WHERE user_id=?',
             (f['username'], f['display_name'], avatar, now, uid)
