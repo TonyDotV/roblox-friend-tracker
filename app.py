@@ -5,7 +5,7 @@ import requests
 import threading
 import time
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 
 app = Flask(__name__, static_folder='static')
 CORS(app)
@@ -19,41 +19,41 @@ HEADERS = {
     'Accept': 'application/json'
 }
 
-# ── Database setup ────────────────────────────────────────────────
+# -- Database setup ---------------------------------------------------
 def init_db():
     con = sqlite3.connect(DB_PATH)
     cur = con.cursor()
     cur.execute('''
         CREATE TABLE IF NOT EXISTS friends (
-            user_id     INTEGER PRIMARY KEY,
-            username    TEXT,
+            user_id      INTEGER PRIMARY KEY,
+            username     TEXT,
             display_name TEXT,
-            avatar_url  TEXT,
-            first_seen  TEXT,
-            last_seen   TEXT
+            avatar_url   TEXT,
+            first_seen   TEXT,
+            last_seen    TEXT
         )
     ''')
     cur.execute('''
         CREATE TABLE IF NOT EXISTS unfriend_log (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id     INTEGER,
-            username    TEXT,
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id      INTEGER,
+            username     TEXT,
             display_name TEXT,
-            avatar_url  TEXT,
-            detected_at TEXT
+            avatar_url   TEXT,
+            detected_at  TEXT
         )
     ''')
     cur.execute('''
         CREATE TABLE IF NOT EXISTS snapshots (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            taken_at    TEXT,
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            taken_at     TEXT,
             friend_count INTEGER
         )
     ''')
     con.commit()
     con.close()
 
-# ── Roblox API helpers ────────────────────────────────────────────
+# -- Roblox API helpers -----------------------------------------------
 def roblox_get(url):
     try:
         r = requests.get(url, headers=HEADERS, timeout=10)
@@ -62,14 +62,6 @@ def roblox_get(url):
     except Exception as e:
         print(f'[roblox_get] {url} -> {e}')
         return None
-
-def get_profile():
-    data = roblox_get(f'https://users.roblox.com/v1/users/{USER_ID}')
-    if not data:
-        return None
-    presence = roblox_get(f'https://presence.roblox.com/v1/presence/users')
-    # presence requires POST, handled separately
-    return data
 
 def get_presence():
     try:
@@ -106,7 +98,7 @@ def get_avatar_url(uid):
 def fetch_friends():
     data = roblox_get(f'https://friends.roblox.com/v1/users/{USER_ID}/friends')
     if not data:
-        return []
+        return None  # None = API error, [] = genuinely no friends
     friends = []
     for f in data.get('data', []):
         friends.append({
@@ -129,27 +121,29 @@ def get_friend_avatars_batch(user_ids):
             result[item['targetId']] = item.get('imageUrl', '')
     return result
 
-# ── Friend tracking logic ─────────────────────────────────────────
+# -- Friend tracking logic --------------------------------------------
 def sync_friends():
     con = sqlite3.connect(DB_PATH)
     cur = con.cursor()
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
 
     live_friends = fetch_friends()
-    if not live_friends and live_friends is not None:
-        # Could be API issue; skip to avoid false unfriend alerts
+    if live_friends is None:
+        # API error - skip to avoid false unfriend alerts
+        print('[sync] Skipping sync due to API error')
         con.close()
         return
 
     live_ids = {f['user_id'] for f in live_friends}
 
-    # Fetch avatars for new friends
+    # Get known friends from DB
     cur.execute('SELECT user_id FROM friends')
     known_ids = {row[0] for row in cur.fetchall()}
-    new_ids = live_ids - known_ids
+
+    # Fetch avatars for all live friends
     avatars = get_friend_avatars_batch(list(live_ids))
 
-    # Detect unfriends
+    # Detect unfriends (were in DB, no longer in live list)
     gone_ids = known_ids - live_ids
     for uid in gone_ids:
         cur.execute('SELECT username, display_name, avatar_url FROM friends WHERE user_id=?', (uid,))
@@ -162,14 +156,15 @@ def sync_friends():
             cur.execute('DELETE FROM friends WHERE user_id=?', (uid,))
             print(f'[unfriend] {row[0]} removed at {now}')
 
-    # Upsert current friends
+    # Upsert all current friends using INSERT OR REPLACE
     for f in live_friends:
         uid = f['user_id']
         avatar = avatars.get(uid, '')
+        # Preserve first_seen if already known
         if uid in known_ids:
             cur.execute(
-                'UPDATE friends SET last_seen=?, avatar_url=? WHERE user_id=?',
-                (now, avatar, uid)
+                'UPDATE friends SET username=?, display_name=?, avatar_url=?, last_seen=? WHERE user_id=?',
+                (f['username'], f['display_name'], avatar, now, uid)
             )
         else:
             cur.execute(
@@ -181,16 +176,17 @@ def sync_friends():
     cur.execute('INSERT INTO snapshots (taken_at, friend_count) VALUES (?,?)', (now, len(live_friends)))
     con.commit()
     con.close()
+    print(f'[sync] Done. {len(live_friends)} friends, {len(gone_ids)} unfriended.')
 
 def polling_loop():
     while True:
+        time.sleep(POLL_INTERVAL)
         try:
             sync_friends()
         except Exception as e:
             print(f'[polling_loop] {e}')
-        time.sleep(POLL_INTERVAL)
 
-# ── API Routes ────────────────────────────────────────────────────
+# -- API Routes -------------------------------------------------------
 @app.route('/api/profile')
 def api_profile():
     data = roblox_get(f'https://users.roblox.com/v1/users/{USER_ID}')
@@ -198,10 +194,9 @@ def api_profile():
         return jsonify({'error': 'Failed to fetch profile'}), 500
     presence = get_presence()
     avatar = get_avatar_url(USER_ID)
-    # Extra: badges count
-    badges = roblox_get(f'https://accountinformation.roblox.com/v1/users/{USER_ID}/roblox-badges')
     groups = roblox_get(f'https://groups.roblox.com/v1/users/{USER_ID}/groups/roles')
     group_count = len(groups.get('data', [])) if groups else 0
+    badges = roblox_get(f'https://accountinformation.roblox.com/v1/users/{USER_ID}/roblox-badges')
     return jsonify({
         'id': data.get('id'),
         'username': data.get('name'),
@@ -223,17 +218,10 @@ def api_friends():
     cur.execute('SELECT user_id, username, display_name, avatar_url, first_seen, last_seen FROM friends ORDER BY username')
     rows = cur.fetchall()
     con.close()
-    friends = []
-    for r in rows:
-        friends.append({
-            'userId': r[0],
-            'username': r[1],
-            'displayName': r[2],
-            'avatarUrl': r[3],
-            'firstSeen': r[4],
-            'lastSeen': r[5]
-        })
-    return jsonify(friends)
+    return jsonify([{
+        'userId': r[0], 'username': r[1], 'displayName': r[2],
+        'avatarUrl': r[3], 'firstSeen': r[4], 'lastSeen': r[5]
+    } for r in rows])
 
 @app.route('/api/unfriends')
 def api_unfriends():
@@ -242,16 +230,10 @@ def api_unfriends():
     cur.execute('SELECT user_id, username, display_name, avatar_url, detected_at FROM unfriend_log ORDER BY detected_at DESC')
     rows = cur.fetchall()
     con.close()
-    log = []
-    for r in rows:
-        log.append({
-            'userId': r[0],
-            'username': r[1],
-            'displayName': r[2],
-            'avatarUrl': r[3],
-            'detectedAt': r[4]
-        })
-    return jsonify(log)
+    return jsonify([{
+        'userId': r[0], 'username': r[1], 'displayName': r[2],
+        'avatarUrl': r[3], 'detectedAt': r[4]
+    } for r in rows])
 
 @app.route('/api/stats')
 def api_stats():
@@ -285,11 +267,11 @@ def serve_frontend(path):
         return send_from_directory(app.static_folder, path)
     return send_from_directory(app.static_folder, 'index.html')
 
-# ── Main ──────────────────────────────────────────────────────────
+# -- Main -------------------------------------------------------------
 if __name__ == '__main__':
     init_db()
     sync_friends()  # initial sync on startup
     t = threading.Thread(target=polling_loop, daemon=True)
     t.start()
-    print(f'[server] Running at http://localhost:5000')
+    print('[server] Running at http://localhost:5000')
     app.run(host='0.0.0.0', port=5000, debug=False)
