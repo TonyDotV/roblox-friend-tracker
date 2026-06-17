@@ -97,15 +97,20 @@ def get_avatar_url(uid):
 
 def fetch_friends():
     data = roblox_get(f'https://friends.roblox.com/v1/users/{USER_ID}/friends')
-    if not data:
-        return None  # None = API error, [] = genuinely no friends
+    if data is None:
+        return None  # API error
+    # Deduplicate by user_id (Roblox API can return duplicates)
+    seen = set()
     friends = []
     for f in data.get('data', []):
-        friends.append({
-            'user_id': f['id'],
-            'username': f.get('name', ''),
-            'display_name': f.get('displayName', '')
-        })
+        uid = f['id']
+        if uid not in seen:
+            seen.add(uid)
+            friends.append({
+                'user_id': uid,
+                'username': f.get('name', ''),
+                'display_name': f.get('displayName', '')
+            })
     return friends
 
 def get_friend_avatars_batch(user_ids):
@@ -129,7 +134,6 @@ def sync_friends():
 
     live_friends = fetch_friends()
     if live_friends is None:
-        # API error - skip to avoid false unfriend alerts
         print('[sync] Skipping sync due to API error')
         con.close()
         return
@@ -156,21 +160,21 @@ def sync_friends():
             cur.execute('DELETE FROM friends WHERE user_id=?', (uid,))
             print(f'[unfriend] {row[0]} removed at {now}')
 
-    # Upsert all current friends using INSERT OR REPLACE
+    # Upsert friends: INSERT OR IGNORE to create row, then UPDATE to refresh data.
+    # This is safe against duplicates in the API response and re-runs.
     for f in live_friends:
         uid = f['user_id']
         avatar = avatars.get(uid, '')
-        # Preserve first_seen if already known
-        if uid in known_ids:
-            cur.execute(
-                'UPDATE friends SET username=?, display_name=?, avatar_url=?, last_seen=? WHERE user_id=?',
-                (f['username'], f['display_name'], avatar, now, uid)
-            )
-        else:
-            cur.execute(
-                'INSERT INTO friends (user_id, username, display_name, avatar_url, first_seen, last_seen) VALUES (?,?,?,?,?,?)',
-                (uid, f['username'], f['display_name'], avatar, now, now)
-            )
+        # Insert new friend (ignored if already exists, preserving first_seen)
+        cur.execute(
+            'INSERT OR IGNORE INTO friends (user_id, username, display_name, avatar_url, first_seen, last_seen) VALUES (?,?,?,?,?,?)',
+            (uid, f['username'], f['display_name'], avatar, now, now)
+        )
+        # Always update mutable fields
+        cur.execute(
+            'UPDATE friends SET username=?, display_name=?, avatar_url=?, last_seen=? WHERE user_id=?',
+            (f['username'], f['display_name'], avatar, now, uid)
+        )
 
     # Snapshot
     cur.execute('INSERT INTO snapshots (taken_at, friend_count) VALUES (?,?)', (now, len(live_friends)))
