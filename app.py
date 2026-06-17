@@ -195,7 +195,7 @@ def sync_friends():
                 for friend in api_friends:
                     if friend['id'] in new_friend_ids:
                         avatar_url = fetch_avatar_headshot(friend['id'])
-                                                        user_info = fetch_user_info(friend['id'])
+                                user_info = fetch_user_info(friend['id'])
                                 username = user_info.get('name', '') if user_info else ''
                                 display_name = user_info.get('displayName', '') if user_info else ''
                         cur.execute('''
